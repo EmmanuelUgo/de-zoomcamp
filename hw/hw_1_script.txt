@@ -1,0 +1,127 @@
+--- Pre processing steps on taxi data
+
+ALTER TABLE public.yellow_taxi_data
+    RENAME "VendorID" TO vendor_id;
+
+ALTER TABLE public.yellow_taxi_data
+    RENAME "PULocationID" TO pu_location_id;
+
+ALTER TABLE public.yellow_taxi_data
+    RENAME "DOLocationID" TO do_location_id;
+
+ALTER TABLE public.yellow_taxi_data
+    RENAME "RatecodeID" TO ratecode_id;
+	
+--- Pre processing steps on zone lookup data
+
+ALTER TABLE public.zone_lookup
+    RENAME "Zone" TO v_zone;
+
+ALTER TABLE public.zone_lookup
+    RENAME "LocationID" TO location_id;
+
+ALTER TABLE public.zone_lookup
+    RENAME "Borough" TO borough;
+	
+-- Solutions to assignment
+
+--- 3. How many taxi trips were there on January 15th
+WITH jan_15 AS(
+	SELECT *, DATE(tpep_pickup_datetime) v_date
+	FROM yellow_taxi_data
+	WHERE EXTRACT(MONTH FROM tpep_pickup_datetime) =  1 AND EXTRACT(day FROM tpep_pickup_datetime) = 15
+)
+
+SELECT v_date, COUNT(*)
+FROM jan_15
+GROUP BY 1
+
+--- 4. On which day it was the largest tip in January?
+
+WITH sample_table AS(
+	SELECT *, DATE(tpep_pickup_datetime) trip_date,
+		MAX(tip_amount) OVER() biggest_tip
+	FROM yellow_taxi_data
+	WHERE EXTRACT(MONTH FROM tpep_pickup_datetime) = 1)
+	
+SELECT trip_date, tip_amount
+FROM sample_table
+WHERE tip_amount = biggest_tip
+
+
+-- 5. What was the most popular destination for passengers picked up in central park on January 14?
+-- Enter the zone name (not id). If the zone name is unknown (missing), write "Unknown"
+
+WITH jan_14 AS(
+	SELECT *
+	FROM yellow_taxi_data
+	WHERE DATE(tpep_pickup_datetime) = '2021-01-14'),
+	
+	central_park AS(
+	SELECT do_location_id
+	FROM jan_14
+	WHERE pu_location_id = (
+		SELECT location_id
+		FROM zone_lookup
+		WHERE lower(v_zone) = 'central park')),
+		
+	top_dest AS(
+	SELECT do_location_id
+	FROM(
+		SELECT do_location_id, COUNT(*)
+		FROM central_park
+		GROUP BY 1
+		ORDER BY 2 DESC
+		LIMIT 1) T1)
+		
+SELECT v_zone
+FROM zone_lookup
+WHERE location_id = (
+	SELECT *
+	FROM top_dest)
+
+
+-- 6. What's the pickup-dropoff pair with the largest average price for a ride (calculated based on total_amount)?
+-- Enter two zone names separated by a slash
+-- For example:
+-- "Jamaica Bay / Clinton East"
+-- If any of the zone names are unknown (missing), write "Unknown". For example, "Unknown / Clinton East".
+
+WITH sample_table AS(
+	SELECT *
+	FROM yellow_taxi_data),
+	
+	highest_avg_price AS(
+	SELECT CONCAT(pu_location_id, '/', do_location_id) trip_detail, AVG(total_amount) avg_amount
+	FROM sample_table
+	GROUP BY 1
+	ORDER BY 2 DESC
+	LIMIT 1),
+	
+	fix_details AS(
+	SELECT CAST(split_part(trip_detail, '/', 1) AS BIGINT) v_start,
+			CAST(split_part(trip_detail, '/', 2) AS BIGINT) v_end,
+			avg_amount
+	FROM highest_avg_price)
+		
+SELECT
+	CONCAT(
+	CASE
+		WHEN zs.v_zone IS NULL THEN 'Unknown'
+		ELSE zs.v_zone
+		END,
+		
+	' / ',
+		
+	CASE
+		WHEN ze.v_zone IS NULL THEN 'Unknown'
+		ELSE ze.v_zone
+		END),
+		
+	fd.avg_amount
+FROM fix_details fd
+LEFT JOIN zone_lookup zs
+ON fd.v_start = zs.location_id
+LEFT JOIN zone_lookup ze
+ON fd.v_end = ze.location_id
+	
